@@ -11,9 +11,23 @@ import createNullSchema from "./null";
 import createNumberSchema from "./number";
 import createStringSchema from "./string";
 import Yup from "../addMethods/";
-import { DataTypes, getCompositionType, getPropertyType, hasAllOf, hasAnyOf, hasNot, hasOneOf, isTypeOfValue } from "../../schema/";
+import {
+  DataTypes,
+  getCompositionType,
+  getPropertyType,
+  hasAllOf,
+  hasAnyOf,
+  hasNot,
+  hasOneOf,
+  isTypeOfValue
+} from "../../schema/";
 import { SchemaItem } from "../types";
-import { createAllOfSchema, createAnyOfSchema, createNotSchema, createOneOfSchema } from "./composition";
+import {
+  createAllOfSchema,
+  createAnyOfSchema,
+  createNotSchema,
+  createOneOfSchema
+} from "./composition";
 
 /**
  * Validates the input data type against the schema type and returns
@@ -64,7 +78,7 @@ const getValidationSchema = (
     [DataTypes.ARRAY]: createArraySchema,
     [DataTypes.BOOLEAN]: createBooleanSchema,
     [DataTypes.NULL]: createNullSchema,
-    [DataTypes.OBJECT]: createObjectSchema,
+    [DataTypes.OBJECT]: createObjectSchema
   };
 
   return schemaMap[type as JSONSchema7TypeName]([key, value], jsonSchema);

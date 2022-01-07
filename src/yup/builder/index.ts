@@ -66,7 +66,11 @@ const buildProperties = (
       const condition = hasIfSchema(jsonSchema, key)
         ? buildCondition(jsonSchema)
         : {};
+
       const newSchema = createValidationSchema([key, value], jsonSchema);
+
+      // if (jsonSchema["allOf"]) console.log(condition);
+
       schema = {
         ...schema,
         [key]: key in schema ? schema[key].concat(newSchema) : newSchema,
@@ -82,10 +86,18 @@ const buildProperties = (
  */
 
 const hasIfSchema = (jsonSchema: JSONSchema7, key: string): boolean => {
-  const { if: ifSchema } = jsonSchema;
-  if (!isSchemaObject(ifSchema)) return false;
-  const { properties } = ifSchema;
-  return isPlainObject(properties) && has(properties, key);
+  const { if: ifSchema, allOf } = jsonSchema;
+
+  const allOfIfSchemas = (allOf || [])
+    .map((el) => typeof el !== "boolean" && el.if)
+    .filter((el) => el);
+
+  const schemas = [ifSchema, ...allOfIfSchemas];
+  return schemas.some((ifSchema) => {
+    if (!isSchemaObject(ifSchema)) return false;
+    const { properties } = ifSchema;
+    return isPlainObject(properties) && has(properties, key);
+  });
 };
 
 /**
@@ -93,73 +105,104 @@ const hasIfSchema = (jsonSchema: JSONSchema7, key: string): boolean => {
  * and generates a validation schema to validate the given value
  */
 
-const isValidator = (
-  [key, value]: [string, JSONSchema7],
-  jsonSchema: JSONSchema7
-) => (val: unknown): boolean => {
-  const conditionalSchema = createValidationSchema([key, value], jsonSchema);
-  const result: boolean = conditionalSchema.isValidSync(val);
-  return result;
-};
+const isValidator =
+  ([key, value]: [string, JSONSchema7], jsonSchema: JSONSchema7) =>
+  (val: unknown): boolean => {
+    const conditionalSchema = createValidationSchema([key, value], jsonSchema);
+    const result: boolean = conditionalSchema.isValidSync(val);
+    return result;
+  };
 
 /** Build `is` and `then` validation schema */
 
 const buildCondition = (
   jsonSchema: JSONSchema7
 ): false | { [key: string]: Yup.MixedSchema } => {
-  const ifSchema = get(jsonSchema, "if");
-  if (!isSchemaObject(ifSchema)) return false;
+  let allConditions: JSONSchema7[] = [];
 
-  const { properties } = ifSchema;
-  if (!properties) return false;
+  const topLevelCondition: JSONSchema7 = {
+    if: jsonSchema.if,
+    then: jsonSchema.then,
+    else: jsonSchema.else
+  };
 
-  const ifSchemaHead = getObjectHead(properties);
+  if (topLevelCondition.if) {
+    allConditions.push(topLevelCondition);
+  }
 
-  if (!ifSchemaHead) return false;
-  const [ifSchemaKey, ifSchemaValue] = ifSchemaHead;
+  const allOfSchemas = jsonSchema["allOf"] || [];
 
-  if (!isSchemaObject(ifSchemaValue)) return false;
+  allOfSchemas.forEach((schema) => {
+    if (typeof schema !== "boolean" && schema.if) {
+      allConditions.push({
+        if: schema.if,
+        then: schema.then,
+        else: schema.else
+      });
+    }
+  });
 
-  const thenSchema = get(jsonSchema, "then");
-  const elseSchema = get(jsonSchema, "else");
+  allConditions = allConditions.filter((condition) => condition.if);
+
+  if (allConditions.length === 0) return false;
 
   let conditionSchema = {};
 
-  if (isSchemaObject(thenSchema)) {
-    const { properties, required } = thenSchema;
+  for (let i = 0; i < allConditions.length; i++) {
+    const ifSchema = allConditions[i].if;
+
+    if (!ifSchema || typeof ifSchema === "boolean") continue;
+
+    const { properties } = ifSchema;
     if (!properties) return false;
 
-    for (const [key, val] of Object.entries(properties)) {
-      if (!val || typeof val === "boolean") continue;
-      const item: { properties: {}; required?: string[] } = {
-        properties: { [key]: { ...val } }
-      };
-      if (required && required.includes(key)) {
-        item.required = [key];
+    const ifSchemaHead = getObjectHead(properties);
+
+    if (!ifSchemaHead) return false;
+    const [ifSchemaKey, ifSchemaValue] = ifSchemaHead;
+
+    if (!isSchemaObject(ifSchemaValue)) return false;
+
+    const thenSchema = get(allConditions[i], "then");
+    const elseSchema = get(allConditions[i], "else");
+
+    if (isSchemaObject(thenSchema)) {
+      const { properties, required } = thenSchema;
+      if (!properties) return false;
+
+      for (const [key, val] of Object.entries(properties)) {
+        if (!val || typeof val === "boolean") continue;
+        const item: { properties: {}; required?: string[] } = {
+          properties: { [key]: { ...val } }
+        };
+        if (required && required.includes(key)) {
+          item.required = [key];
+        }
+        const isValid = isValidator([ifSchemaKey, ifSchemaValue], item);
+        const thenConditionSchema = buildConditionItem(item, [
+          ifSchemaKey,
+          (val) => isValid(val) === true
+        ]);
+        if (thenConditionSchema)
+          conditionSchema = Object.assign(
+            {},
+            conditionSchema,
+            thenConditionSchema
+          );
       }
-      const isValid = isValidator([ifSchemaKey, ifSchemaValue], item);
-      const thenConditionSchema = buildConditionItem(item, [
+    }
+
+    if (isSchemaObject(elseSchema)) {
+      const isValid = isValidator([ifSchemaKey, ifSchemaValue], elseSchema);
+      const elseConditionSchema = buildConditionItem(elseSchema, [
         ifSchemaKey,
-        (val) => isValid(val) === true
+        (val) => isValid(val) === false
       ]);
-      if (thenConditionSchema)
-        conditionSchema = Object.assign(
-          {},
-          conditionSchema,
-          thenConditionSchema
-        );
+      if (!elseConditionSchema) return false;
+      conditionSchema = { ...conditionSchema, ...elseConditionSchema };
     }
   }
 
-  if (isSchemaObject(elseSchema)) {
-    const isValid = isValidator([ifSchemaKey, ifSchemaValue], elseSchema);
-    const elseConditionSchema = buildConditionItem(elseSchema, [
-      ifSchemaKey,
-      (val) => isValid(val) === false
-    ]);
-    if (!elseConditionSchema) return false;
-    conditionSchema = { ...conditionSchema, ...elseConditionSchema };
-  }
   return conditionSchema;
 };
 
