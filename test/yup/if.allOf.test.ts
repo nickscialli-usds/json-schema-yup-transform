@@ -218,5 +218,12 @@ describe("convertToYup() string conditions", () => {
       }
     });
     expect(isValid).toBeTruthy();
+
+    const isInvalid = yupschema.isValidSync({
+      location: {
+        country: "Australia"
+      }
+    });
+    expect(isInvalid).toBeFalsy();
   });
 });
