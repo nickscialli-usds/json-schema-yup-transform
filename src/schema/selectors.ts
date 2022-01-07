@@ -58,12 +58,11 @@ export const getPropertyType = (
 
 export const getCompositionType = (
   propertyItem: JSONSchema7
-): CompositSchemaTypes | false | undefined => (
-  propertyItem.anyOf && CompositSchemaTypes.ANYOF
-  || propertyItem.allOf && CompositSchemaTypes.ALLOF
-  || propertyItem.oneOf && CompositSchemaTypes.ONEOF
-  || propertyItem.not && CompositSchemaTypes.NOT
-);
+): CompositSchemaTypes | false | undefined =>
+  (propertyItem.anyOf && CompositSchemaTypes.ANYOF) ||
+  (propertyItem.allOf && CompositSchemaTypes.ALLOF) ||
+  (propertyItem.oneOf && CompositSchemaTypes.ONEOF) ||
+  (propertyItem.not && CompositSchemaTypes.NOT);
 
 /**
  * Retrieve required property value

@@ -123,6 +123,7 @@ const createValidationSchema = (
   if (isString(type)) {
     return getValidationSchema([key, value], jsonSchema);
   }
+  console.log(type, key, value.if);
   throw new Error("Type key is missing");
 };
 

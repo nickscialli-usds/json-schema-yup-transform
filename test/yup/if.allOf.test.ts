@@ -162,4 +162,61 @@ describe("convertToYup() string conditions", () => {
     });
     expect(isValid2).toBeTruthy();
   });
+  it("should validate deep schema", () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      $schema: "http://json-schema.org/draft-07/schema#",
+      $id: "test",
+      title: "Test",
+      definitions: {
+        location: {
+          $id: "/definitions/location",
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "object",
+          properties: {
+            country: {
+              type: "string",
+              enum: ["Australia", "Canada"]
+            }
+          },
+          required: ["country"],
+          allOf: [
+            {
+              if: {
+                properties: { country: { type: "string", const: "Australia" } }
+              },
+              then: {
+                properties: {
+                  postal_code: {
+                    type: "string",
+                    pattern: "[0-9]{5}(-[0-9]{4})?"
+                  }
+                },
+                required: ["postal_code"]
+              }
+            }
+          ]
+        }
+      },
+      properties: {
+        location: {
+          description: "",
+          $ref: "#/definitions/location"
+        }
+      },
+      required: ["location"]
+    };
+
+    const yupschema = convertToYup(schema) as Yup.ObjectSchema;
+
+    const isValid = yupschema.isValidSync({
+      location: {
+        country: "Australia",
+        isMinor: true,
+        postal_code: "12345",
+        hasParentConsent: true
+      }
+    });
+    expect(isValid).toBeTruthy();
+  });
 });
