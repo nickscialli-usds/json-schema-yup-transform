@@ -69,8 +69,6 @@ const buildProperties = (
 
       const newSchema = createValidationSchema([key, value], jsonSchema);
 
-      // if (jsonSchema["allOf"]) console.log(condition);
-
       schema = {
         ...schema,
         [key]: key in schema ? schema[key].concat(newSchema) : newSchema,
