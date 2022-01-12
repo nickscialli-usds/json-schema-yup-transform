@@ -723,4 +723,65 @@ describe("convertToYup() string conditions", () => {
     });
     expect(isValid).toBeFalsy();
   });
+  it("validates deep if statements", () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      $schema: "http://json-schema.org/draft-07/schema#",
+      $id: "test",
+      title: "Test",
+      properties: {
+        country: {
+          type: "string"
+        },
+        state: {
+          type: "string"
+        },
+        postal_code: { type: "string" }
+      },
+      if: {
+        properties: { country: { type: "string", const: "Australia" } }
+      },
+      then: {
+        properties: {
+          postal_code: { type: "string" },
+          state: { type: "string" }
+        },
+        required: ["postal_code", "state"],
+        if: {
+          properties: {
+            state: { type: "string", const: "Queensland" }
+          }
+        },
+        then: {
+          properties: {
+            city: { type: "string" }
+          },
+          required: ["city"]
+        }
+      }
+    };
+    const yupschema = convertToYup(schema) as Yup.ObjectSchema;
+
+    let isValid = yupschema.isValidSync({
+      country: "Australia",
+      postal_code: "0000",
+      state: "VIC"
+    });
+    expect(isValid).toBeTruthy();
+
+    isValid = yupschema.isValidSync({
+      country: "Australia",
+      postal_code: "0000",
+      state: "Queensland"
+    });
+    expect(isValid).toBeFalsy();
+
+    isValid = yupschema.isValidSync({
+      country: "Australia",
+      postal_code: "0000",
+      state: "Queensland",
+      city: "Brisbane"
+    });
+    expect(isValid).toBeTruthy();
+  });
 });

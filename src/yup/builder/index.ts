@@ -67,12 +67,30 @@ const buildProperties = (
         ? buildCondition(jsonSchema)
         : {};
 
-      const newSchema = createValidationSchema([key, value], jsonSchema);
+      // Check for nested condition (e.g., if inside then)
+      const nestedCondition =
+        jsonSchema.then &&
+        typeof jsonSchema.then !== "boolean" &&
+        hasIfSchema(jsonSchema.then, key)
+          ? buildCondition(jsonSchema.then)
+          : {};
 
+      // check if item has if schema in allOf array
+      const conditions = hasAllOfIfSchema(jsonSchema, key)
+        ? jsonSchema.allOf?.reduce((all, schema) => {
+            if (typeof schema === "boolean") {
+              return all;
+            }
+            return { ...all, ...buildCondition(schema) };
+          }, [])
+        : [];
+      const newSchema = createValidationSchema([key, value], jsonSchema);
       schema = {
         ...schema,
         [key]: key in schema ? schema[key].concat(newSchema) : newSchema,
-        ...condition
+        ...condition,
+        ...nestedCondition,
+        ...conditions
       };
     }
   }
@@ -84,18 +102,26 @@ const buildProperties = (
  */
 
 const hasIfSchema = (jsonSchema: JSONSchema7, key: string): boolean => {
-  const { if: ifSchema, allOf } = jsonSchema;
+  const { if: ifSchema } = jsonSchema;
+  if (!isSchemaObject(ifSchema)) return false;
+  const { properties } = ifSchema;
+  return isPlainObject(properties) && has(properties, key);
+};
 
-  const allOfIfSchemas = (allOf || [])
-    .map((el) => typeof el !== "boolean" && el.if)
-    .filter((el) => el);
+/**
+ * Determine schema has at least one if schemas inside an allOf array
+ */
 
-  const schemas = [ifSchema, ...allOfIfSchemas];
-  return schemas.some((ifSchema) => {
-    if (!isSchemaObject(ifSchema)) return false;
-    const { properties } = ifSchema;
-    return isPlainObject(properties) && has(properties, key);
-  });
+const hasAllOfIfSchema = (jsonSchema: JSONSchema7, key: string): boolean => {
+  const { allOf } = jsonSchema;
+
+  if (!allOf) {
+    return false;
+  }
+
+  return allOf.some(
+    (schema) => typeof schema !== "boolean" && hasIfSchema(schema, key)
+  );
 };
 
 /**
@@ -116,91 +142,59 @@ const isValidator =
 const buildCondition = (
   jsonSchema: JSONSchema7
 ): false | { [key: string]: Yup.MixedSchema } => {
-  let allConditions: JSONSchema7[] = [];
+  const ifSchema = get(jsonSchema, "if");
+  if (!isSchemaObject(ifSchema)) return false;
 
-  const topLevelCondition: JSONSchema7 = {
-    if: jsonSchema.if,
-    then: jsonSchema.then,
-    else: jsonSchema.else
-  };
+  const { properties } = ifSchema;
+  if (!properties) return false;
 
-  if (topLevelCondition.if) {
-    allConditions.push(topLevelCondition);
-  }
+  const ifSchemaHead = getObjectHead(properties);
 
-  const allOfSchemas = jsonSchema["allOf"] || [];
+  if (!ifSchemaHead) return false;
+  const [ifSchemaKey, ifSchemaValue] = ifSchemaHead;
 
-  allOfSchemas.forEach((schema) => {
-    if (typeof schema !== "boolean" && schema.if) {
-      allConditions.push({
-        if: schema.if,
-        then: schema.then,
-        else: schema.else
-      });
-    }
-  });
+  if (!isSchemaObject(ifSchemaValue)) return false;
 
-  allConditions = allConditions.filter((condition) => condition.if);
-
-  if (allConditions.length === 0) return false;
+  const thenSchema = get(jsonSchema, "then");
+  const elseSchema = get(jsonSchema, "else");
 
   let conditionSchema = {};
 
-  for (let i = 0; i < allConditions.length; i++) {
-    const ifSchema = allConditions[i].if;
-
-    if (!ifSchema || typeof ifSchema === "boolean") continue;
-
-    const { properties } = ifSchema;
+  if (isSchemaObject(thenSchema)) {
+    const { properties, required } = thenSchema;
     if (!properties) return false;
 
-    const ifSchemaHead = getObjectHead(properties);
-
-    if (!ifSchemaHead) return false;
-    const [ifSchemaKey, ifSchemaValue] = ifSchemaHead;
-
-    if (!isSchemaObject(ifSchemaValue)) return false;
-
-    const thenSchema = get(allConditions[i], "then");
-    const elseSchema = get(allConditions[i], "else");
-
-    if (isSchemaObject(thenSchema)) {
-      const { properties, required } = thenSchema;
-      if (!properties) return false;
-
-      for (const [key, val] of Object.entries(properties)) {
-        if (!val || typeof val === "boolean") continue;
-        const item: { properties: {}; required?: string[] } = {
-          properties: { [key]: { ...val } }
-        };
-        if (required && required.includes(key)) {
-          item.required = [key];
-        }
-        const isValid = isValidator([ifSchemaKey, ifSchemaValue], item);
-        const thenConditionSchema = buildConditionItem(item, [
-          ifSchemaKey,
-          (val) => isValid(val) === true
-        ]);
-        if (thenConditionSchema)
-          conditionSchema = Object.assign(
-            {},
-            conditionSchema,
-            thenConditionSchema
-          );
+    for (const [key, val] of Object.entries(properties)) {
+      if (!val || typeof val === "boolean") continue;
+      const item: { properties: {}; required?: string[] } = {
+        properties: { [key]: { ...val } }
+      };
+      if (required && required.includes(key)) {
+        item.required = [key];
       }
-    }
-
-    if (isSchemaObject(elseSchema)) {
-      const isValid = isValidator([ifSchemaKey, ifSchemaValue], elseSchema);
-      const elseConditionSchema = buildConditionItem(elseSchema, [
+      const isValid = isValidator([ifSchemaKey, ifSchemaValue], item);
+      const thenConditionSchema = buildConditionItem(item, [
         ifSchemaKey,
-        (val) => isValid(val) === false
+        (val) => isValid(val) === true
       ]);
-      if (!elseConditionSchema) return false;
-      conditionSchema = { ...conditionSchema, ...elseConditionSchema };
+      if (thenConditionSchema)
+        conditionSchema = Object.assign(
+          {},
+          conditionSchema,
+          thenConditionSchema
+        );
     }
   }
 
+  if (isSchemaObject(elseSchema)) {
+    const isValid = isValidator([ifSchemaKey, ifSchemaValue], elseSchema);
+    const elseConditionSchema = buildConditionItem(elseSchema, [
+      ifSchemaKey,
+      (val) => isValid(val) === false
+    ]);
+    if (!elseConditionSchema) return false;
+    conditionSchema = { ...conditionSchema, ...elseConditionSchema };
+  }
   return conditionSchema;
 };
 
