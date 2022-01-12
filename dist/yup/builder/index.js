@@ -10,13 +10,6 @@ var __assign = (this && this.__assign) || function () {
     };
     return __assign.apply(this, arguments);
 };
-var __spreadArrays = (this && this.__spreadArrays) || function () {
-    for (var s = 0, i = 0, il = arguments.length; i < il; i++) s += arguments[i].length;
-    for (var r = Array(s), k = 0, i = 0; i < il; i++)
-        for (var a = arguments[i], j = 0, jl = a.length; j < jl; j++, k++)
-            r[k] = a[j];
-    return r;
-};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -34,9 +27,10 @@ var utils_1 = require("../utils");
  */
 var buildProperties = function (properties, jsonSchema) {
     var _a, _b, _c, _d;
+    var _e;
     var schema = {};
-    for (var _i = 0, _e = Object.entries(properties); _i < _e.length; _i++) {
-        var _f = _e[_i], key = _f[0], value = _f[1];
+    for (var _i = 0, _f = Object.entries(properties); _i < _f.length; _i++) {
+        var _g = _f[_i], key = _g[0], value = _g[1];
         if (!schema_1.isSchemaObject(value)) {
             continue;
         }
@@ -68,8 +62,22 @@ var buildProperties = function (properties, jsonSchema) {
             var condition = hasIfSchema(jsonSchema, key)
                 ? buildCondition(jsonSchema)
                 : {};
+            // Check for nested condition (e.g., if inside then)
+            var nestedCondition = jsonSchema.then &&
+                typeof jsonSchema.then !== "boolean" &&
+                hasIfSchema(jsonSchema.then, key)
+                ? buildCondition(jsonSchema.then)
+                : {};
+            // check if item has if schema in allOf array
+            var conditions = hasAllOfIfSchema(jsonSchema, key)
+                ? (_e = jsonSchema.allOf) === null || _e === void 0 ? void 0 : _e.reduce(function (all, schema) {
+                    if (typeof schema === "boolean") {
+                        return all;
+                    }
+                    return __assign(__assign({}, all), buildCondition(schema));
+                }, []) : [];
             var newSchema = schemas_1["default"]([key, value], jsonSchema);
-            schema = __assign(__assign(__assign({}, schema), (_d = {}, _d[key] = key in schema ? schema[key].concat(newSchema) : newSchema, _d)), condition);
+            schema = __assign(__assign(__assign(__assign(__assign({}, schema), (_d = {}, _d[key] = key in schema ? schema[key].concat(newSchema) : newSchema, _d)), condition), nestedCondition), conditions);
         }
     }
     return schema;
@@ -78,17 +86,21 @@ var buildProperties = function (properties, jsonSchema) {
  * Determine schema has a if schema
  */
 var hasIfSchema = function (jsonSchema, key) {
-    var ifSchema = jsonSchema["if"], allOf = jsonSchema.allOf;
-    var allOfIfSchemas = (allOf || [])
-        .map(function (el) { return typeof el !== "boolean" && el["if"]; })
-        .filter(function (el) { return el; });
-    var schemas = __spreadArrays([ifSchema], allOfIfSchemas);
-    return schemas.some(function (ifSchema) {
-        if (!schema_1.isSchemaObject(ifSchema))
-            return false;
-        var properties = ifSchema.properties;
-        return isPlainObject_1["default"](properties) && has_1["default"](properties, key);
-    });
+    var ifSchema = jsonSchema["if"];
+    if (!schema_1.isSchemaObject(ifSchema))
+        return false;
+    var properties = ifSchema.properties;
+    return isPlainObject_1["default"](properties) && has_1["default"](properties, key);
+};
+/**
+ * Determine schema has at least one if schemas inside an allOf array
+ */
+var hasAllOfIfSchema = function (jsonSchema, key) {
+    var allOf = jsonSchema.allOf;
+    if (!allOf) {
+        return false;
+    }
+    return allOf.some(function (schema) { return typeof schema !== "boolean" && hasIfSchema(schema, key); });
 };
 /**
  * High order function that takes json schema and property item
@@ -104,86 +116,57 @@ var isValidator = function (_a, jsonSchema) {
 };
 /** Build `is` and `then` validation schema */
 var buildCondition = function (jsonSchema) {
-    var allConditions = [];
-    var topLevelCondition = {
-        "if": jsonSchema["if"],
-        then: jsonSchema.then,
-        "else": jsonSchema["else"]
-    };
-    if (topLevelCondition["if"]) {
-        allConditions.push(topLevelCondition);
-    }
-    var allOfSchemas = jsonSchema["allOf"] || [];
-    allOfSchemas.forEach(function (schema) {
-        if (typeof schema !== "boolean" && schema["if"]) {
-            allConditions.push({
-                "if": schema["if"],
-                then: schema.then,
-                "else": schema["else"]
-            });
-        }
-    });
-    allConditions = allConditions.filter(function (condition) { return condition["if"]; });
-    if (allConditions.length === 0)
+    var ifSchema = get_1["default"](jsonSchema, "if");
+    if (!schema_1.isSchemaObject(ifSchema))
         return false;
+    var properties = ifSchema.properties;
+    if (!properties)
+        return false;
+    var ifSchemaHead = utils_1.getObjectHead(properties);
+    if (!ifSchemaHead)
+        return false;
+    var ifSchemaKey = ifSchemaHead[0], ifSchemaValue = ifSchemaHead[1];
+    if (!schema_1.isSchemaObject(ifSchemaValue))
+        return false;
+    var thenSchema = get_1["default"](jsonSchema, "then");
+    var elseSchema = get_1["default"](jsonSchema, "else");
     var conditionSchema = {};
-    var _loop_1 = function (i) {
-        var ifSchema = allConditions[i]["if"];
-        if (!ifSchema || typeof ifSchema === "boolean")
-            return "continue";
-        var properties = ifSchema.properties;
-        if (!properties)
-            return { value: false };
-        var ifSchemaHead = utils_1.getObjectHead(properties);
-        if (!ifSchemaHead)
-            return { value: false };
-        var ifSchemaKey = ifSchemaHead[0], ifSchemaValue = ifSchemaHead[1];
-        if (!schema_1.isSchemaObject(ifSchemaValue))
-            return { value: false };
-        var thenSchema = get_1["default"](allConditions[i], "then");
-        var elseSchema = get_1["default"](allConditions[i], "else");
-        if (schema_1.isSchemaObject(thenSchema)) {
-            var properties_2 = thenSchema.properties, required = thenSchema.required;
-            if (!properties_2)
-                return { value: false };
-            var _loop_2 = function (key, val) {
-                var _a;
-                if (!val || typeof val === "boolean")
-                    return "continue";
-                var item = {
-                    properties: (_a = {}, _a[key] = __assign({}, val), _a)
-                };
-                if (required && required.includes(key)) {
-                    item.required = [key];
-                }
-                var isValid = isValidator([ifSchemaKey, ifSchemaValue], item);
-                var thenConditionSchema = buildConditionItem(item, [
-                    ifSchemaKey,
-                    function (val) { return isValid(val) === true; }
-                ]);
-                if (thenConditionSchema)
-                    conditionSchema = Object.assign({}, conditionSchema, thenConditionSchema);
+    if (schema_1.isSchemaObject(thenSchema)) {
+        var properties_2 = thenSchema.properties, required = thenSchema.required;
+        if (!properties_2)
+            return false;
+        var _loop_1 = function (key, val) {
+            var _a;
+            if (!val || typeof val === "boolean")
+                return "continue";
+            var item = {
+                properties: (_a = {}, _a[key] = __assign({}, val), _a)
             };
-            for (var _i = 0, _a = Object.entries(properties_2); _i < _a.length; _i++) {
-                var _b = _a[_i], key = _b[0], val = _b[1];
-                _loop_2(key, val);
+            if (required && required.includes(key)) {
+                item.required = [key];
             }
-        }
-        if (schema_1.isSchemaObject(elseSchema)) {
-            var isValid_1 = isValidator([ifSchemaKey, ifSchemaValue], elseSchema);
-            var elseConditionSchema = buildConditionItem(elseSchema, [
+            var isValid = isValidator([ifSchemaKey, ifSchemaValue], item);
+            var thenConditionSchema = buildConditionItem(item, [
                 ifSchemaKey,
-                function (val) { return isValid_1(val) === false; }
+                function (val) { return isValid(val) === true; }
             ]);
-            if (!elseConditionSchema)
-                return { value: false };
-            conditionSchema = __assign(__assign({}, conditionSchema), elseConditionSchema);
+            if (thenConditionSchema)
+                conditionSchema = Object.assign({}, conditionSchema, thenConditionSchema);
+        };
+        for (var _i = 0, _a = Object.entries(properties_2); _i < _a.length; _i++) {
+            var _b = _a[_i], key = _b[0], val = _b[1];
+            _loop_1(key, val);
         }
-    };
-    for (var i = 0; i < allConditions.length; i++) {
-        var state_1 = _loop_1(i);
-        if (typeof state_1 === "object")
-            return state_1.value;
+    }
+    if (schema_1.isSchemaObject(elseSchema)) {
+        var isValid_1 = isValidator([ifSchemaKey, ifSchemaValue], elseSchema);
+        var elseConditionSchema = buildConditionItem(elseSchema, [
+            ifSchemaKey,
+            function (val) { return isValid_1(val) === false; }
+        ]);
+        if (!elseConditionSchema)
+            return false;
+        conditionSchema = __assign(__assign({}, conditionSchema), elseConditionSchema);
     }
     return conditionSchema;
 };
